@@ -1,0 +1,69 @@
+# ============================================================================
+# Per-property adapter config.
+#
+# STATUS as of the Phase 1 file audit (Aug 2026) — updated after checking
+# all 6 properties' current-year files:
+#
+# EVERY property's FY 26-27 file uses the SAME "All Bookings" template.
+# This includes Leyn Baan, which was expected to still be on the older
+# per-month layout — it turned out to have already migrated. Crystal Sands'
+# old "Jan 2024"-style monthly sheets are confirmed legacy/deprecated, not
+# used going forward, per direct instruction.
+#
+# One sheet named "All Bookings", 29 columns, a real "Payment Status"
+# column, dates as "16-Mar-26" (D-MMM-YY), and a large block of blank-ID
+# forecast/room-blocking rows mixed into the same sheet (safely filtered by
+# skip_row_if_reservation_id_blank). Reservation numbers are alphanumeric
+# ("20260403-504092-1249892806") and NOT unique per row — multi-room
+# bookings and rebookings can legitimately reuse the same number (see
+# qualityChecks.js dedup logic).
+#
+# Confirmed directly against real files: CRS, SIX, SOL, KIR, LYN.
+# ASM (Asaya Sands) is very highly likely the same — matching "Drop Downs"
+# payment-status list, matching 10-sheet count (identical to Kirana/Sol
+# House), and its old FY 25-26 file already had this exact 29-column set
+# (just split into per-month sheets, same pattern old Crystal Sands used).
+# Three targeted attempts to directly read the current file's "All Bookings"
+# sheet content were made and blocked each time — the search tool keeps
+# ranking the workbook's pivot-summary sheet ahead of the actual data sheet
+# no matter the query. Still NOT a direct read — a 2-minute manual open of
+# the file remains the one confirmation step actually left undone.
+#
+# SRN (Serenity Villa): no live file yet. Give it this same template
+# directly when it launches — see STANDARDIZATION.md.
+# ============================================================================
+
+_all_bookings_template: &all_bookings_template
+  sheet_name: "All Bookings"
+  header_row: 1
+  column_map:
+    reservation_id: "Reservation No."
+    guest_arrival_date: "Arrival"
+    guest_departure_date: "Departure"
+    booking_date: "Date of Reservation"
+    room_revenue: "Room Charges"
+    total_revenue: "Total Booking Value"
+    status: "Payment Status"
+    channel: "Source"
+  # Confirmed dates are day-month name-year text ("16-Mar-26"), but a few
+  # numeric-slash values were also observed (e.g. "8/17/2026") — try both.
+  date_formats: ["D-MMM-YY", "DD-MMM-YY", "M/D/YYYY", "MM/DD/YYYY"]
+  currency: "LKR"
+  status_map:
+    confirmed: ["Vouchered", "Full Payment", "Deposit Paid"]
+    pending: ["Pending Payment"]
+    cancelled: ["Cancelled", "cancelled", "cC"] # "cC" seen as a typo/placeholder value in template rows — harmless since those rows are blank-ID and already filtered
+    no_show: ["No Show"]
+  skip_row_if_reservation_id_blank: true
+
+properties:
+  CRS: *all_bookings_template  # Crystal Sands — confirmed
+  SIX: *all_bookings_template  # The Six — confirmed
+  SOL: *all_bookings_template  # Sol House — confirmed
+  KIR: *all_bookings_template  # Kirana Villa — confirmed
+  LYN: *all_bookings_template  # 77 Leyn Baan — confirmed (turned out to already be on the shared template, not the old per-month layout)
+  ASM: *all_bookings_template  # Asaya Sands — very likely correct, still not directly confirmed (see note above) — spot-check before trusting
+
+  # SRN (Serenity Villa) intentionally omitted — no live file yet.
+  # When it launches, give it the shared template directly:
+  #   SRN: *all_bookings_template

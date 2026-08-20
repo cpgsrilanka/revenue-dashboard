@@ -1,0 +1,22 @@
+{
+  "name": "revenue-dashboard-ingestion",
+  "version": "0.1.0",
+  "description": "Nightly job: pull Excel reservation exports from SharePoint, normalize, validate, and load into Supabase.",
+  "type": "module",
+  "main": "ingest.js",
+  "scripts": {
+    "ingest": "node ingest.js",
+    "ingest:dry-run": "node ingest.js --dry-run",
+    "test": "node test-parse-legacy-monthly.mjs && node test-parse-all-bookings.mjs && node test-dedupe.mjs && node test-alerting.mjs"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.4.1",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@supabase/supabase-js": "^2.45.4",
+    "dayjs": "^1.11.13",
+    "dotenv": "^16.4.5",
+    "isomorphic-fetch": "^3.0.0",
+    "js-yaml": "^4.1.0",
+    "xlsx": "^0.18.5"
+  }
+}
