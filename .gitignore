@@ -1,3 +1,4 @@
--e ingestion/.env
+ingestion/.env
 node_modules/
 .DS_Store
+ingestion/governance-runs/

@@ -15,15 +15,21 @@ function timeAgo(isoString) {
 export default function DataHealthPanel({ findings }) {
   const critical = findings.filter((f) => f.severity === "critical").length;
   const warning = findings.filter((f) => f.severity === "warning").length;
+  const info = findings.filter((f) => f.severity === "info").length;
+  const summary = [
+    critical ? `${critical} critical` : null,
+    warning ? `${warning} warning` : null,
+    info ? `${info} info` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <div className="border border-line rounded-xl p-5 bg-white/40">
       <div className="flex items-center justify-between mb-4">
         <p className="font-medium text-ink">Data health</p>
         <span className="text-xs text-slate">
-          {findings.length === 0
-            ? "No open findings"
-            : `${critical} critical, ${warning} warning`}
+          {findings.length === 0 ? "No open findings" : summary}
         </span>
       </div>
 

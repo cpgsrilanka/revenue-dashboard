@@ -32,6 +32,20 @@ const trueDupe = [
   row({ reservation_id: "1125", total_revenue: 355092 }),
 ];
 
+// Case 4: negative cancellation/adjustment row. It should be visible to
+// operational totals, not quarantined out like a broken row.
+const negativeAdjustment = [
+  row({
+    reservation_id: "CX-1",
+    status: "cancelled",
+    total_revenue: -55000,
+    room_revenue: -55000,
+    nights: -1,
+    guest_arrival_date: "2026-07-10",
+    guest_departure_date: "2026-07-09",
+  }),
+];
+
 for (const [label, cleanRows] of [["multiVilla", multiVilla], ["rebooking", rebooking], ["trueDupe", trueDupe]]) {
   const findings = runQualityChecks({ propertyCode: "TEST", cleanRows, parseErrors: [], previousFileRowCount: null });
   const dupFindings = findings.filter((f) => f.check_type === "duplicate");
@@ -52,6 +66,11 @@ const checks = [
     const f = runQualityChecks({ propertyCode: "TEST", cleanRows: trueDupe, parseErrors: [], previousFileRowCount: null });
     return f.filter((x) => x.check_type === "duplicate").length === 1;
   })(), "identical ID+dates+revenue copy-paste MUST be flagged as duplicate"],
+  [(() => {
+    const rows = negativeAdjustment.map((item) => ({ data: { ...item.data } }));
+    const f = runQualityChecks({ propertyCode: "TEST", cleanRows: rows, parseErrors: [], previousFileRowCount: null });
+    return f.filter((x) => x.check_type === "referential").length === 1 && rows.every((item) => !item.data.is_quarantined);
+  })(), "negative cancellation/adjustment rows should be flagged but still included"],
 ];
 const failed = checks.filter(([ok]) => !ok);
 if (failed.length > 0) {

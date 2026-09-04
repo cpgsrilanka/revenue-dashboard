@@ -33,8 +33,3 @@ jobs:
           SHAREPOINT_DRIVE_ID: ${{ secrets.SHAREPOINT_DRIVE_ID }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          # Nightly alert email (optional) — leave the two secrets unset in
-          # GitHub to skip email alerts entirely; ingest.js degrades gracefully.
-          ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
-          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
-          ALERT_ALWAYS: ${{ vars.ALERT_ALWAYS }}

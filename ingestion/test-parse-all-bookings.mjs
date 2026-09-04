@@ -41,6 +41,8 @@ const checks = [
   [cleanRows.length === 3, `expected 3 clean rows (forecast row filtered), got ${cleanRows.length}`],
   [byRes?.status === "confirmed", '"Full Payment" should map to status=confirmed'],
   [byRes?.guest_arrival_date === "2026-04-03", 'D-MMM-YY date "3-Apr-26" should parse correctly'],
+  [byRes?.period_month === "2026-04-01", 'Month value "Apr-26" should become period_month=2026-04-01'],
+  [byRes?.nights === 21, "Room Nights from the workbook should be preserved"],
   [multiRoom.length === 2, `multi-room booking should keep both rows, got ${multiRoom.length}`],
   [dupFindings.length === 0, `multi-room booking with same ID must NOT be flagged as duplicate, got ${dupFindings.length} finding(s)`],
   [parseErrors.length === 0, `expected 0 parse errors, got ${parseErrors.length}`],

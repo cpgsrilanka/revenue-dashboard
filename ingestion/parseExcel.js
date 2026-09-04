@@ -4,6 +4,8 @@ import customParseFormat from "dayjs/plugin/customParseFormat.js";
 
 dayjs.extend(customParseFormat);
 
+const excelDateParser = XLSX.SSF || XLSX.default?.SSF;
+
 /**
  * Parses a property's Excel file buffer into:
  *   - rawRows: every row as-is (column name -> value), for the raw layer
@@ -124,10 +126,16 @@ function mapRowToUnifiedSchema(row, propertyCode, config) {
   const arrival = parseDate(getCol(row, cm.guest_arrival_date), config);
   const departure = parseDate(getCol(row, cm.guest_departure_date), config);
   const bookingDate = cm.booking_date ? parseDate(getCol(row, cm.booking_date), config) : null;
+  const pickupDate = config.pickup_date_column
+    ? parseDate(getCol(row, config.pickup_date_column), config)
+    : bookingDate;
+  const periodMonth = cm.period_month ? parseMonth(getCol(row, cm.period_month), config) : null;
 
-  const nights = arrival && departure ? dayjs(departure).diff(dayjs(arrival), "day") : null;
+  const sourceNights = cm.nights ? toNumber(getCol(row, cm.nights)) : null;
+  const nights = sourceNights ?? (arrival && departure ? dayjs(departure).diff(dayjs(arrival), "day") : null);
 
   const roomRevenue = cm.room_revenue ? toNumber(getCol(row, cm.room_revenue)) : null;
+  const fnbRevenue = cm.fnb_revenue ? toNumber(getCol(row, cm.fnb_revenue)) : null;
   const totalRevenue = toNumber(getCol(row, cm.total_revenue));
 
   let status;
@@ -144,6 +152,7 @@ function mapRowToUnifiedSchema(row, propertyCode, config) {
   }
 
   const channel = cm.channel ? getCol(row, cm.channel) : null;
+  const segment = cm.segment ? getCol(row, cm.segment) : null;
 
   return {
     reservation_id: baseId,
@@ -151,14 +160,19 @@ function mapRowToUnifiedSchema(row, propertyCode, config) {
     guest_arrival_date: arrival,
     guest_departure_date: departure,
     booking_date: bookingDate,
+    pickup_date: pickupDate,
+    period_month: periodMonth,
     nights,
     room_revenue: roomRevenue,
-    fnb_revenue: null,
+    fnb_revenue: fnbRevenue,
     other_revenue: null,
     total_revenue: totalRevenue,
     currency: config.currency,
     status,
     channel,
+    segment,
+    is_quarantined: false,
+    quarantine_reason: null,
   };
 }
 
@@ -205,7 +219,7 @@ function parseDate(value, config) {
   if (value === null || value === undefined || value === "") return null;
 
   if (typeof value === "number") {
-    const parsed = XLSX.SSF.parse_date_code(value);
+    const parsed = excelDateParser?.parse_date_code(value);
     if (!parsed) return null;
     return dayjs(new Date(parsed.y, parsed.m - 1, parsed.d)).format("YYYY-MM-DD");
   }
@@ -230,6 +244,27 @@ function parseDate(value, config) {
     if (parsed.isValid()) return parsed.format("YYYY-MM-DD");
   }
   return null;
+}
+
+function parseMonth(value, config) {
+  if (value === null || value === undefined || value === "") return null;
+
+  if (typeof value === "number") {
+    const parsed = excelDateParser?.parse_date_code(value);
+    if (!parsed) return null;
+    return dayjs(new Date(parsed.y, parsed.m - 1, 1)).format("YYYY-MM-DD");
+  }
+
+  const raw = String(value).trim();
+  const formats = config.month_formats || ["MMM-YY", "MMM-YYYY", "MMMM-YY", "MMMM-YYYY", "YYYY-MM"];
+
+  for (const fmt of formats) {
+    const parsed = dayjs(raw, fmt, true);
+    if (parsed.isValid()) return parsed.startOf("month").format("YYYY-MM-DD");
+  }
+
+  const dateParsed = parseDate(raw, config);
+  return dateParsed ? dayjs(dateParsed).startOf("month").format("YYYY-MM-DD") : null;
 }
 
 function toNumber(value) {

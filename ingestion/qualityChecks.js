@@ -80,20 +80,27 @@ export function runQualityChecks({ propertyCode, cleanRows, parseErrors, previou
   for (const { data } of cleanRows) {
     if (data.is_quarantined) continue; // already flagged above
 
+    const revenueValue = data.room_revenue ?? data.total_revenue;
+    const isAdjustment = data.status === "cancelled" || Number(revenueValue || 0) < 0 || Number(data.nights || 0) < 0;
+
     if (
       data.guest_arrival_date &&
       data.guest_departure_date &&
       dayjs(data.guest_departure_date).isBefore(dayjs(data.guest_arrival_date))
     ) {
-      data.is_quarantined = true;
-      data.quarantine_reason = "departure_before_arrival";
       findings.push({
         property_code: propertyCode,
         check_type: "referential",
-        severity: "critical",
-        message: `Departure date is before arrival date.`,
+        severity: isAdjustment ? "warning" : "critical",
+        message: isAdjustment
+          ? `Departure date is before arrival date on an adjustment row; included in operational totals for now.`
+          : `Departure date is before arrival date.`,
         related_reservation_id: data.reservation_id,
       });
+      if (!isAdjustment) {
+        data.is_quarantined = true;
+        data.quarantine_reason = "departure_before_arrival";
+      }
       continue;
     }
 
@@ -112,13 +119,11 @@ export function runQualityChecks({ propertyCode, cleanRows, parseErrors, previou
       }
 
       if (data.total_revenue < 0) {
-        data.is_quarantined = true;
-        data.quarantine_reason = "negative_revenue";
         findings.push({
           property_code: propertyCode,
           check_type: "range",
-          severity: "critical",
-          message: `Negative total_revenue value: ${data.total_revenue}.`,
+          severity: "warning",
+          message: `Negative total_revenue value: ${data.total_revenue}; included as an adjustment.`,
           related_reservation_id: data.reservation_id,
         });
       }

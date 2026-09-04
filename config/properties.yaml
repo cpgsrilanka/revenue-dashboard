@@ -41,13 +41,18 @@ _all_bookings_template: &all_bookings_template
     guest_arrival_date: "Arrival"
     guest_departure_date: "Departure"
     booking_date: "Date of Reservation"
+    period_month: "Month"
+    nights: "Room Nights"
     room_revenue: "Room Charges"
+    fnb_revenue: "Meal Charges"
     total_revenue: "Total Booking Value"
     status: "Payment Status"
     channel: "Source"
+    segment: "Segment"
   # Confirmed dates are day-month name-year text ("16-Mar-26"), but a few
   # numeric-slash values were also observed (e.g. "8/17/2026") — try both.
   date_formats: ["D-MMM-YY", "DD-MMM-YY", "M/D/YYYY", "MM/DD/YYYY"]
+  month_formats: ["MMM-YY", "MMM-YYYY", "MMMM-YY", "MMMM-YYYY", "YYYY-MM"]
   currency: "LKR"
   status_map:
     confirmed: ["Vouchered", "Full Payment", "Deposit Paid"]
@@ -55,14 +60,27 @@ _all_bookings_template: &all_bookings_template
     cancelled: ["Cancelled", "cancelled", "cC"] # "cC" seen as a typo/placeholder value in template rows — harmless since those rows are blank-ID and already filtered
     no_show: ["No Show"]
   skip_row_if_reservation_id_blank: true
+  # The dashboard's daily pickup uses this field. Most properties should use
+  # Date of Reservation, but several live Excel reports currently drive their
+  # "Date Selector" slicer from Confirmation Date instead.
+  pickup_date_column: "Date of Reservation"
 
 properties:
-  CRS: *all_bookings_template  # Crystal Sands — confirmed
-  SIX: *all_bookings_template  # The Six — confirmed
-  SOL: *all_bookings_template  # Sol House — confirmed
-  KIR: *all_bookings_template  # Kirana Villa — confirmed
-  LYN: *all_bookings_template  # 77 Leyn Baan — confirmed (turned out to already be on the shared template, not the old per-month layout)
-  ASM: *all_bookings_template  # Asaya Sands — very likely correct, still not directly confirmed (see note above) — spot-check before trusting
+  CRS: *all_bookings_template  # Crystal Sands — Excel Date Selector uses Date of Reservation
+  ASM: *all_bookings_template  # Asaya Sands — Excel Date Selector uses Date of Reservation
+
+  SIX:
+    <<: *all_bookings_template
+    pickup_date_column: "Confirmation Date" # Excel Date Selector uses Confirmation Date
+  SOL:
+    <<: *all_bookings_template
+    pickup_date_column: "Confirmation Date" # Excel pickup slicer uses Confirmation Date; an Arrival slicer also exists
+  KIR:
+    <<: *all_bookings_template
+    pickup_date_column: "Confirmation Date" # Excel Date Selector uses Confirmation Date
+  LYN:
+    <<: *all_bookings_template
+    pickup_date_column: "Confirmation Date" # Excel Date Selector uses Confirmation Date
 
   # SRN (Serenity Villa) intentionally omitted — no live file yet.
   # When it launches, give it the shared template directly:

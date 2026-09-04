@@ -12,8 +12,14 @@ function formatCurrency(value, currency) {
 }
 
 export default function PropertyCard({ property, lastIngestedAt }) {
-  const delta = property.actual_revenue - property.budgeted_revenue;
-  const deltaPct = property.budgeted_revenue ? (delta / property.budgeted_revenue) * 100 : 0;
+  const actualRevenue = Number(property.actual_revenue || 0);
+  const budgetedRevenue =
+    property.budgeted_revenue === null || property.budgeted_revenue === undefined
+      ? null
+      : Number(property.budgeted_revenue);
+  const hasBudget = budgetedRevenue !== null;
+  const delta = hasBudget ? actualRevenue - budgetedRevenue : 0;
+  const deltaPct = budgetedRevenue ? (delta / budgetedRevenue) * 100 : 0;
   const isOverBudget = delta >= 0;
 
   const isStale =
@@ -36,16 +42,20 @@ export default function PropertyCard({ property, lastIngestedAt }) {
       </div>
 
       <p className="font-display text-2xl font-medium tabular-nums mt-3">
-        {formatCurrency(property.actual_revenue, property.currency)}
+        {formatCurrency(actualRevenue, property.currency)}
       </p>
 
       <div className="flex items-center justify-between mt-2">
-        <span
-          className={`text-xs font-medium tabular-nums ${isOverBudget ? "text-brass" : "text-brick"}`}
-        >
-          {isOverBudget ? "+" : ""}
-          {deltaPct.toFixed(1)}% vs budget
-        </span>
+        {hasBudget ? (
+          <span
+            className={`text-xs font-medium tabular-nums ${isOverBudget ? "text-brass" : "text-brick"}`}
+          >
+            {isOverBudget ? "+" : ""}
+            {deltaPct.toFixed(1)}% vs budget
+          </span>
+        ) : (
+          <span className="text-xs font-medium text-slate">Budget pending</span>
+        )}
         <span className="text-xs text-slate tabular-nums">
           {property.reservation_count} reservations
         </span>

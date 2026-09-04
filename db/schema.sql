@@ -74,23 +74,31 @@ create table clean_reservations (
   guest_arrival_date      date,
   guest_departure_date    date,
   booking_date            date,
-  nights                  integer,
+  pickup_date             date,
+  period_month            date,
+  nights                  numeric(12,2),
   room_revenue            numeric(14,2),
   fnb_revenue             numeric(14,2),
   other_revenue           numeric(14,2),
   total_revenue           numeric(14,2),
   currency                text,
   revenue_base_currency   numeric(14,2),          -- converted to group reporting currency, if applicable
-  status                  text check (status in ('confirmed', 'cancelled', 'no_show', 'checked_out', 'unknown')),
+  status                  text check (status in ('confirmed', 'pending', 'cancelled', 'no_show', 'checked_out', 'unknown')),
   channel                 text,                    -- OTA / direct / walk-in, if available
+  segment                 text,                    -- DMC / FIT - Local / OTA / Owner, if available
   is_quarantined          boolean not null default false,
   quarantine_reason       text,
   created_at              timestamptz not null default now(),
   updated_at              timestamptz not null default now(),
-  unique (property_code, reservation_id)
+  -- Reservation numbers are not unique per property: multi-room bookings and
+  -- rebookings can legitimately repeat the same ID. This matches the duplicate
+  -- detector's structural key while still making repeat ingestion idempotent.
+  unique nulls not distinct (property_code, reservation_id, guest_arrival_date, guest_departure_date, total_revenue)
 );
 
 create index idx_clean_reservations_property_dates on clean_reservations(property_code, guest_arrival_date);
+create index idx_clean_reservations_property_period on clean_reservations(property_code, period_month);
+create index idx_clean_reservations_pickup_date on clean_reservations(pickup_date);
 create index idx_clean_reservations_quarantined on clean_reservations(is_quarantined) where is_quarantined = true;
 
 -- ----------------------------------------------------------------------------
@@ -127,7 +135,52 @@ create table budget (
 );
 
 -- ----------------------------------------------------------------------------
--- 7. Convenience view for the dashboard: monthly revenue by property,
+-- 7. Monthly segment report — the screenshot-style matrix from the workbook's
+--    Revenue & Pickup Report sheet.
+-- ----------------------------------------------------------------------------
+create table monthly_segment_report (
+  id                    bigserial primary key,
+  property_code         text not null references property_master(property_code),
+  period_month          date not null,
+  segment               text not null,
+  budget_revenue        numeric(14,2) not null default 0,
+  budget_room_nights    numeric(12,2) not null default 0,
+  budget_arr            numeric(14,2) not null default 0,
+  actual_revenue        numeric(14,2) not null default 0,
+  actual_room_nights    numeric(12,2) not null default 0,
+  actual_arr            numeric(14,2) not null default 0,
+  balance_revenue       numeric(14,2) not null default 0,
+  balance_room_nights   numeric(12,2) not null default 0,
+  currency              text not null default 'LKR',
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now(),
+  unique (property_code, period_month, segment)
+);
+
+create index idx_monthly_segment_report_lookup on monthly_segment_report(property_code, period_month);
+
+-- ----------------------------------------------------------------------------
+-- 8. Revenue snapshots — saved after each ingestion run so the dashboard can
+--    calculate daily pickup by comparing today's totals against the previous
+--    snapshot for the same property/month.
+-- ----------------------------------------------------------------------------
+create table revenue_snapshot (
+  id                  bigserial primary key,
+  property_code       text not null references property_master(property_code),
+  snapshot_date       date not null default current_date,
+  period_month        date not null,
+  actual_revenue      numeric(14,2) not null default 0,
+  reservation_count   integer not null default 0,
+  currency            text not null default 'LKR',
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now(),
+  unique (property_code, snapshot_date, period_month)
+);
+
+create index idx_revenue_snapshot_lookup on revenue_snapshot(property_code, period_month, snapshot_date desc);
+
+-- ----------------------------------------------------------------------------
+-- 9. Convenience view for the dashboard: monthly revenue by property,
 --    excluding quarantined rows, with budget joined in.
 -- ----------------------------------------------------------------------------
 create view v_monthly_revenue as
@@ -135,18 +188,194 @@ select
   cr.property_code,
   pm.name as property_name,
   pm.entity,
-  date_trunc('month', cr.guest_arrival_date)::date as period_month,
-  sum(cr.total_revenue) filter (where cr.status not in ('cancelled', 'no_show')) as actual_revenue,
-  count(*) filter (where cr.status not in ('cancelled', 'no_show')) as reservation_count,
+  coalesce(cr.period_month, date_trunc('month', cr.guest_arrival_date)::date) as period_month,
+  -- Matches the workbook Revenue & Pickup Report: this report's actual
+  -- revenue values come from Room Charges, not Total Booking Value. Negative
+  -- cancelled rows are kept because the workbook includes those adjustments.
+  sum(coalesce(cr.room_revenue, cr.total_revenue)) as actual_revenue,
+  count(*) as reservation_count,
   b.budgeted_revenue,
-  cr.currency
+  cr.currency,
+  sum(coalesce(cr.room_revenue, 0)) as room_revenue,
+  sum(coalesce(cr.fnb_revenue, 0)) as fnb_revenue,
+  sum(coalesce(cr.total_revenue, 0)) as total_booking_value,
+  sum(coalesce(cr.nights, 0)) as actual_room_nights
 from clean_reservations cr
 join property_master pm on pm.property_code = cr.property_code
 left join budget b
   on b.property_code = cr.property_code
-  and b.period_month = date_trunc('month', cr.guest_arrival_date)::date
+  and b.period_month = coalesce(cr.period_month, date_trunc('month', cr.guest_arrival_date)::date)
 where cr.is_quarantined = false
-group by cr.property_code, pm.name, pm.entity, date_trunc('month', cr.guest_arrival_date), b.budgeted_revenue, cr.currency;
+  and coalesce(cr.period_month, date_trunc('month', cr.guest_arrival_date)::date) is not null
+group by
+  cr.property_code,
+  pm.name,
+  pm.entity,
+  coalesce(cr.period_month, date_trunc('month', cr.guest_arrival_date)::date),
+  b.budgeted_revenue,
+  cr.currency;
+
+-- ----------------------------------------------------------------------------
+-- 10. Segment-level revenue matrix: actuals are calculated from clean
+--     All Bookings rows, while segment budgets come from the workbook budget
+--     pivot/table parsed into monthly_segment_report.
+-- ----------------------------------------------------------------------------
+create view v_monthly_segment_revenue as
+with actuals as (
+  select
+    cr.property_code,
+    coalesce(cr.period_month, date_trunc('month', cr.guest_arrival_date)::date) as period_month,
+    coalesce(nullif(trim(cr.segment), ''), 'Unassigned') as segment,
+    sum(coalesce(cr.room_revenue, cr.total_revenue, 0)) as actual_revenue,
+    sum(coalesce(cr.nights, 0)) as actual_room_nights,
+    cr.currency
+  from clean_reservations cr
+  where cr.is_quarantined = false
+    and coalesce(cr.period_month, date_trunc('month', cr.guest_arrival_date)::date) is not null
+  group by
+    cr.property_code,
+    coalesce(cr.period_month, date_trunc('month', cr.guest_arrival_date)::date),
+    coalesce(nullif(trim(cr.segment), ''), 'Unassigned'),
+    cr.currency
+),
+budgets as (
+  select
+    property_code,
+    period_month,
+    coalesce(nullif(trim(segment), ''), 'Unassigned') as segment,
+    sum(budget_revenue) as budget_revenue,
+    sum(budget_room_nights) as budget_room_nights,
+    max(currency) as currency
+  from monthly_segment_report
+  -- Keep property-level Total rows so the dashboard can allocate monthly budgets
+  -- when a workbook does not provide segment-level budget rows.
+  where lower(coalesce(segment, '')) <> 'grand total'
+  group by property_code, period_month, coalesce(nullif(trim(segment), ''), 'Unassigned')
+)
+select
+  coalesce(a.property_code, b.property_code) as property_code,
+  pm.name as property_name,
+  pm.entity,
+  coalesce(a.period_month, b.period_month) as period_month,
+  coalesce(a.segment, b.segment) as segment,
+  coalesce(b.budget_revenue, 0) as budget_revenue,
+  coalesce(b.budget_room_nights, 0) as budget_room_nights,
+  case
+    when coalesce(b.budget_room_nights, 0) = 0 then 0
+    else coalesce(b.budget_revenue, 0) / nullif(b.budget_room_nights, 0)
+  end as budget_arr,
+  coalesce(a.actual_revenue, 0) as actual_revenue,
+  coalesce(a.actual_room_nights, 0) as actual_room_nights,
+  case
+    when coalesce(a.actual_room_nights, 0) = 0 then 0
+    else coalesce(a.actual_revenue, 0) / nullif(a.actual_room_nights, 0)
+  end as actual_arr,
+  coalesce(a.actual_revenue, 0) - coalesce(b.budget_revenue, 0) as balance_revenue,
+  coalesce(a.actual_room_nights, 0) - coalesce(b.budget_room_nights, 0) as balance_room_nights,
+  coalesce(a.currency, b.currency, 'LKR') as currency
+from actuals a
+full outer join budgets b
+  on b.property_code = a.property_code
+  and b.period_month = a.period_month
+  and b.segment = a.segment
+join property_master pm on pm.property_code = coalesce(a.property_code, b.property_code);
+
+-- ----------------------------------------------------------------------------
+-- 11. Daily pickup view: latest snapshot minus the previous snapshot for the
+--    same property/month.
+-- ----------------------------------------------------------------------------
+create view v_daily_pickup as
+with latest as (
+  select distinct on (property_code, period_month)
+    property_code,
+    snapshot_date,
+    period_month,
+    actual_revenue,
+    reservation_count,
+    currency
+  from revenue_snapshot
+  order by property_code, period_month, snapshot_date desc, updated_at desc
+)
+select
+  latest.property_code,
+  pm.name as property_name,
+  pm.entity,
+  latest.period_month,
+  latest.snapshot_date,
+  latest.actual_revenue,
+  previous.actual_revenue as previous_revenue,
+  case
+    when previous.actual_revenue is null then null
+    else latest.actual_revenue - previous.actual_revenue
+  end as pickup_revenue,
+  latest.reservation_count,
+  previous.reservation_count as previous_reservation_count,
+  case
+    when previous.reservation_count is null then null
+    else latest.reservation_count - previous.reservation_count
+  end as pickup_reservations,
+  latest.currency
+from latest
+join property_master pm on pm.property_code = latest.property_code
+left join lateral (
+  select actual_revenue, reservation_count
+  from revenue_snapshot prior
+  where prior.property_code = latest.property_code
+    and prior.period_month = latest.period_month
+    and prior.snapshot_date < latest.snapshot_date
+  order by prior.snapshot_date desc, prior.updated_at desc
+  limit 1
+) previous on true;
+
+-- ----------------------------------------------------------------------------
+-- 11. Dashboard read access
+--
+-- The ingestion job writes with a server-side secret key. The web dashboard
+-- reads as a signed-in Supabase Auth user, so keep RLS enabled and grant only
+-- read access to the dashboard-facing tables/views.
+-- ----------------------------------------------------------------------------
+alter view v_monthly_revenue set (security_invoker = true);
+alter view v_monthly_segment_revenue set (security_invoker = true);
+alter view v_daily_pickup set (security_invoker = true);
+
+grant usage on schema public to authenticated;
+grant select on property_master, ingestion_log, clean_reservations, data_quality_log, budget, monthly_segment_report, revenue_snapshot to authenticated;
+grant select on v_monthly_revenue, v_monthly_segment_revenue, v_daily_pickup to authenticated;
+
+create policy "authenticated can read property master"
+  on property_master for select
+  to authenticated
+  using (true);
+
+create policy "authenticated can read ingestion log"
+  on ingestion_log for select
+  to authenticated
+  using (true);
+
+create policy "authenticated can read clean reservations"
+  on clean_reservations for select
+  to authenticated
+  using (true);
+
+create policy "authenticated can read data quality log"
+  on data_quality_log for select
+  to authenticated
+  using (true);
+
+create policy "authenticated can read budget"
+  on budget for select
+  to authenticated
+  using (true);
+
+create policy "authenticated can read monthly segment report"
+  on monthly_segment_report for select
+  to authenticated
+  using (true);
+
+create policy "authenticated can read revenue snapshots"
+  on revenue_snapshot for select
+  to authenticated
+  using (true);
 
 -- ----------------------------------------------------------------------------
 -- Seed the property master — filenames confirmed against the real

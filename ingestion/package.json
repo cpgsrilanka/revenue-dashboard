@@ -7,7 +7,9 @@
   "scripts": {
     "ingest": "node ingest.js",
     "ingest:dry-run": "node ingest.js --dry-run",
-    "test": "node test-parse-legacy-monthly.mjs && node test-parse-all-bookings.mjs && node test-dedupe.mjs && node test-alerting.mjs"
+    "workbooks:standardize": "node workbookGovernance.js --dry-run",
+    "workbooks:standardize:apply": "node workbookGovernance.js --apply",
+    "test": "node test-parse-legacy-monthly.mjs && node test-parse-all-bookings.mjs && node test-dedupe.mjs && node test-parse-budget.mjs && node test-parse-report-matrix.mjs"
   },
   "dependencies": {
     "@azure/identity": "^4.4.1",
@@ -15,7 +17,6 @@
     "@supabase/supabase-js": "^2.45.4",
     "dayjs": "^1.11.13",
     "dotenv": "^16.4.5",
-    "isomorphic-fetch": "^3.0.0",
     "js-yaml": "^4.1.0",
     "xlsx": "^0.18.5"
   }
