@@ -12,6 +12,7 @@ import SignOutButton from "@/components/SignOutButton";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabaseClient";
 import {
+  getLastIngestedPerProperty,
   getMonthlyRevenue,
   getOpenDataQualityFindings,
   getSegmentMatrixForRange,
@@ -93,6 +94,35 @@ function formatPeriodLabel({ mode, month, financialYear }) {
   if (mode === "fy") return `FY ${financialYear}/${String(financialYear + 1).slice(-2)}`;
   if (mode === "ytd") return `YTD through ${formatMonthLabel(month)}`;
   return formatMonthLabel(month);
+}
+
+function formatLastImport(value) {
+  if (!value) return "No successful import yet";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "No successful import yet";
+
+  return new Intl.DateTimeFormat("en-LK", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Colombo",
+  }).format(date);
+}
+
+function latestImportForProperties(lastIngestedByProperty, propertyCodes) {
+  const codes = [...new Set(propertyCodes)].filter(Boolean);
+  const scope = codes.length ? codes : Object.keys(lastIngestedByProperty || {});
+  const imports = scope
+    .map((code) => lastIngestedByProperty?.[code])
+    .filter(Boolean)
+    .map((timestamp) => ({ timestamp, time: new Date(timestamp).getTime() }))
+    .filter((entry) => !Number.isNaN(entry.time))
+    .sort((a, b) => b.time - a.time);
+
+  return {
+    timestamp: imports[0]?.timestamp || null,
+    propertyCount: imports.length,
+  };
 }
 
 function numberValue(value) {
@@ -318,12 +348,14 @@ export default async function DashboardPage({ searchParams = {} }) {
     allMatrixRows,
     allPickupRows,
     cumulativeProperties,
+    lastIngestedByProperty,
   ] = await Promise.all([
     getMonthlyRevenue(period.start, period.end, dataClient),
     getOpenDataQualityFindings(dataClient),
     getSegmentMatrixForRange(period.start, period.end, dataClient),
     getBookingPickupForDate(selectedPickupDate, pickupPeriodStart, pickupPeriodEnd, dataClient),
     getMonthlyRevenue(cumulativePeriod.start, cumulativePeriod.end, dataClient),
+    getLastIngestedPerProperty(dataClient),
   ]);
 
   const propertyRows = aggregateProperties(allProperties);
@@ -367,21 +399,43 @@ export default async function DashboardPage({ searchParams = {} }) {
   const segmentScopeLabel =
     selectedSegments.length === 0 ? "All segments" : selectedSegments.join(", ");
   const filterScopeLabel = `${propertyLabel} / ${segmentScopeLabel}`;
+  const lastImport = latestImportForProperties(
+    lastIngestedByProperty,
+    properties.map((property) => property.property_code)
+  );
+  const importScopeLabel =
+    lastImport.propertyCount === 1
+      ? "1 property refreshed"
+      : `${lastImport.propertyCount} properties refreshed`;
 
   return (
     <main className="max-w-5xl mx-auto px-6 py-10">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-8">
         <p className="font-display text-lg">Revenue dashboard</p>
-        <div className="flex items-center gap-4">
-          <p className="text-xs text-slate">
-            {periodLabel}
-          </p>
-          {userEmail && (
-            <div className="flex items-center gap-2 text-xs text-slate">
-              <span>{userEmail}</span>
-              <SignOutButton />
-            </div>
-          )}
+        <div className="flex flex-col items-start gap-2 sm:items-end">
+          <div className="flex items-center gap-4">
+            <p className="text-xs text-slate">
+              {periodLabel}
+            </p>
+            {userEmail && (
+              <div className="flex items-center gap-2 text-xs text-slate">
+                <span>{userEmail}</span>
+                <SignOutButton />
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate sm:justify-end">
+            <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white/55 px-3 py-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-brass" aria-hidden="true" />
+              <span>
+                Data last updated:{" "}
+                <span className="font-medium text-ink tabular-nums">
+                  {formatLastImport(lastImport.timestamp)}
+                </span>
+              </span>
+            </span>
+            {lastImport.propertyCount > 0 && <span>{importScopeLabel}</span>}
+          </div>
         </div>
       </div>
 
