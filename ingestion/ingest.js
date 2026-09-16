@@ -287,12 +287,22 @@ async function ingestProperty(graphClient, driveId, property) {
 
 async function upsertCleanRows(rows) {
   const usesSourceKey = rows.every((row) => row.source_system && row.source_record_id);
+  const conflictColumns = usesSourceKey
+    ? ["property_code", "source_system", "source_record_id"]
+    : [
+        "property_code",
+        "reservation_id",
+        "guest_arrival_date",
+        "guest_departure_date",
+        "total_revenue",
+      ];
+  const uniqueRows = dedupeForUpsert(rows, conflictColumns, "clean reservation");
   const options = {
     onConflict: usesSourceKey
       ? "property_code,source_system,source_record_id"
       : "property_code,reservation_id,guest_arrival_date,guest_departure_date,total_revenue",
   };
-  const { error } = await supabase.from("clean_reservations").upsert(rows, options);
+  const { error } = await supabase.from("clean_reservations").upsert(uniqueRows, options);
   if (!error) return;
 
   if (usesSourceKey && /source_system|source_record_id|ON CONFLICT/i.test(error.message || "")) {
@@ -305,7 +315,7 @@ async function upsertCleanRows(rows) {
     console.warn(
       "Segment tracking is not active yet. Run db/dashboard-matrix-upgrade.sql in Supabase, then run ingestion again."
     );
-    const rowsWithoutSegment = rows.map(({ segment, ...row }) => row);
+    const rowsWithoutSegment = uniqueRows.map(({ segment, ...row }) => row);
     const { error: retryError } = await supabase
       .from("clean_reservations")
       .upsert(rowsWithoutSegment, options);
@@ -317,7 +327,7 @@ async function upsertCleanRows(rows) {
     console.warn(
       "Pickup-date basis is not active yet. Run db/pickup-date-basis.sql in Supabase, then run ingestion again."
     );
-    const rowsWithoutPickupDate = rows.map(({ pickup_date, ...row }) => row);
+    const rowsWithoutPickupDate = uniqueRows.map(({ pickup_date, ...row }) => row);
     const { error: retryError } = await supabase
       .from("clean_reservations")
       .upsert(rowsWithoutPickupDate, options);
@@ -353,7 +363,8 @@ async function removeLegacyCleanRows(propertyCode) {
 async function upsertBudgets(budgetRows) {
   if (!budgetRows.length) return;
 
-  const { error } = await supabase.from("budget").upsert(budgetRows, {
+  const uniqueRows = dedupeForUpsert(budgetRows, ["property_code", "period_month"], "budget");
+  const { error } = await supabase.from("budget").upsert(uniqueRows, {
     onConflict: "property_code,period_month",
   });
   if (error) throw error;
@@ -362,7 +373,12 @@ async function upsertBudgets(budgetRows) {
 async function upsertReportMatrixRows(matrixRows) {
   if (!matrixRows.length) return;
 
-  const { error } = await supabase.from("monthly_segment_report").upsert(matrixRows, {
+  const uniqueRows = dedupeForUpsert(
+    matrixRows,
+    ["property_code", "period_month", "segment"],
+    "monthly segment"
+  );
+  const { error } = await supabase.from("monthly_segment_report").upsert(uniqueRows, {
     onConflict: "property_code,period_month,segment",
   });
   if (!error) return;
@@ -375,6 +391,25 @@ async function upsertReportMatrixRows(matrixRows) {
   }
 
   throw error;
+}
+
+function dedupeForUpsert(rows, conflictColumns, label) {
+  const rowsByKey = new Map();
+  let duplicateCount = 0;
+
+  for (const row of rows) {
+    const key = JSON.stringify(conflictColumns.map((column) => row[column] ?? null));
+    if (rowsByKey.has(key)) duplicateCount++;
+    rowsByKey.set(key, row);
+  }
+
+  if (duplicateCount > 0) {
+    console.warn(
+      `Collapsed ${duplicateCount} repeated ${label} row(s) before database upsert; the last source row was retained.`
+    );
+  }
+
+  return [...rowsByKey.values()];
 }
 
 async function refreshRevenueSnapshots() {
