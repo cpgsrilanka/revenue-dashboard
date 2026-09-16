@@ -6,6 +6,7 @@ import yaml from "js-yaml";
 
 import { buildGraphClient, listPropertyFiles, downloadFile } from "./graphClient.js";
 import { parsePropertyWorkbook } from "./parseExcel.js";
+import { parsePmsExport } from "./parsePmsExport.js";
 import { parseBudgetRows } from "./parseBudget.js";
 import { parseReportMatrixRows } from "./parseReportMatrix.js";
 import { runQualityChecks } from "./qualityChecks.js";
@@ -69,16 +70,30 @@ async function ingestProperty(graphClient, driveId, property) {
     return { propertyCode, status: "skipped_no_config" };
   }
 
+  const pms = config.pms?.enabled ? config.pms : null;
+  const sourceLabel = pms ? `${pms.adapter} PMS export` : "legacy workbook";
+  const sourceFilenameMatch = pms?.filename_match || filenameMatch;
+
+  if (pms && !DRY_RUN && pms.replace_legacy_clean_rows !== true) {
+    throw new Error(
+      `${propertyCode}: PMS adapter is enabled, but replace_legacy_clean_rows is not true. ` +
+        "Run a dry run first, reconcile it, then explicitly approve the clean-row cutover."
+    );
+  }
+
   let files;
   try {
-    files = await listPropertyFiles(graphClient, driveId, filenameMatch);
+    files = await listPropertyFiles(graphClient, driveId, sourceFilenameMatch, pms ? {
+      folders: pms.folders,
+      extensions: pms.extensions,
+    } : undefined);
   } catch (err) {
     console.error(`Failed to list files for ${propertyCode}: ${err.message}`);
     await logQualityFinding({
       property_code: propertyCode,
       check_type: "completeness",
       severity: "critical",
-      message: `Could not search SharePoint for files matching "${filenameMatch}": ${err.message}`,
+      message: `Could not search SharePoint for ${sourceLabel} files matching "${sourceFilenameMatch}": ${err.message}`,
     });
     return { propertyCode, status: "sharepoint_error", hasCriticalFindings: true };
   }
@@ -88,7 +103,7 @@ async function ingestProperty(graphClient, driveId, property) {
       property_code: propertyCode,
       check_type: "completeness",
       severity: "warning",
-      message: `No .xlsx files found matching "${filenameMatch}" in any known Databases/FY folder.`,
+      message: `No ${sourceLabel} files found matching "${sourceFilenameMatch}".`,
     });
     return { propertyCode, status: "no_files_found", filesProcessed: 0 };
   }
@@ -106,16 +121,18 @@ async function ingestProperty(graphClient, driveId, property) {
     // Idempotency: skip files we've already ingested with this exact content
     const buffer = await downloadFile(file.downloadUrl);
     const fileHash = crypto.createHash("sha256").update(buffer).digest("hex");
-    const { budgetRows, warnings: budgetWarnings } = parseBudgetRows(
-      buffer,
-      propertyCode,
-      config.currency
-    );
-    const { matrixRows, warnings: matrixWarnings } = parseReportMatrixRows(
-      buffer,
-      propertyCode,
-      config.currency
-    );
+    const { budgetRows, budgetWarnings, matrixRows, matrixWarnings } = pms
+      ? { budgetRows: [], budgetWarnings: [], matrixRows: [], matrixWarnings: [] }
+      : (() => {
+          const budget = parseBudgetRows(buffer, propertyCode, config.currency);
+          const matrix = parseReportMatrixRows(buffer, propertyCode, config.currency);
+          return {
+            budgetRows: budget.budgetRows,
+            budgetWarnings: budget.warnings,
+            matrixRows: matrix.matrixRows,
+            matrixWarnings: matrix.warnings,
+          };
+        })();
 
     for (const warning of budgetWarnings) {
       console.warn(`${propertyCode}: budget warning - ${warning}`);
@@ -124,7 +141,15 @@ async function ingestProperty(graphClient, driveId, property) {
       console.warn(`${propertyCode}: matrix warning - ${warning}`);
     }
 
-    const { rawRows, cleanRows, parseErrors } = parsePropertyWorkbook(buffer, propertyCode, config);
+    const { rawRows, cleanRows, parseErrors } = pms
+      ? parsePmsExport(buffer, propertyCode, config)
+      : parsePropertyWorkbook(buffer, propertyCode, config);
+    const cleanRowsWithSnapshot = pms
+      ? cleanRows.map((row) => ({
+          ...row,
+          data: { ...row.data, source_snapshot_id: fileHash },
+        }))
+      : cleanRows;
 
     const { data: prevLog } = await supabase
       .from("ingestion_log")
@@ -136,15 +161,16 @@ async function ingestProperty(graphClient, driveId, property) {
 
     const findings = runQualityChecks({
       propertyCode,
-      cleanRows,
+      cleanRows: cleanRowsWithSnapshot,
       parseErrors,
       previousFileRowCount: prevLog?.row_count,
+      requireTotalRevenue: pms?.require_total_revenue !== false,
     });
 
     hasCritical = hasCritical || findings.some((f) => f.severity === "critical");
     totalFindings += findings.length;
 
-    const cleanRowsToStore = cleanRows.filter(
+    const cleanRowsToStore = cleanRowsWithSnapshot.filter(
       (r) => r.data.quarantine_reason !== "duplicate_row_in_file"
     );
 
@@ -160,6 +186,10 @@ async function ingestProperty(graphClient, driveId, property) {
       if (!DRY_RUN) {
         if (cleanRowsToStore.length > 0) {
           await upsertCleanRows(cleanRowsToStore.map((r) => ({ ...r.data })));
+        }
+        if (pms && !hasCritical) {
+          await removeStalePmsRows(propertyCode, pms.adapter, fileHash);
+          await removeLegacyCleanRows(propertyCode);
         }
         await upsertBudgets(budgetRows);
         await upsertReportMatrixRows(matrixRows);
@@ -222,6 +252,11 @@ async function ingestProperty(graphClient, driveId, property) {
       await upsertCleanRows(cleanRowsToStore.map((r) => ({ ...r.data })));
     }
 
+    if (pms && !hasCritical) {
+      await removeStalePmsRows(propertyCode, pms.adapter, fileHash);
+      await removeLegacyCleanRows(propertyCode);
+    }
+
     // 4. Upsert budget rows from the same workbook's revenue pickup report
     await upsertBudgets(budgetRows);
     await upsertReportMatrixRows(matrixRows);
@@ -251,12 +286,20 @@ async function ingestProperty(graphClient, driveId, property) {
 }
 
 async function upsertCleanRows(rows) {
+  const usesSourceKey = rows.every((row) => row.source_system && row.source_record_id);
   const options = {
-    onConflict:
-      "property_code,reservation_id,guest_arrival_date,guest_departure_date,total_revenue",
+    onConflict: usesSourceKey
+      ? "property_code,source_system,source_record_id"
+      : "property_code,reservation_id,guest_arrival_date,guest_departure_date,total_revenue",
   };
   const { error } = await supabase.from("clean_reservations").upsert(rows, options);
   if (!error) return;
+
+  if (usesSourceKey && /source_system|source_record_id|ON CONFLICT/i.test(error.message || "")) {
+    throw new Error(
+      "PMS source columns are not active in Supabase. Run db/pms-source-adapters-upgrade.sql before enabling this PMS adapter."
+    );
+  }
 
   if (error.message?.includes("'segment' column")) {
     console.warn(
@@ -283,6 +326,28 @@ async function upsertCleanRows(rows) {
   }
 
   throw error;
+}
+
+async function removeStalePmsRows(propertyCode, adapter, snapshotId) {
+  const sourceSystem = adapter.replace(/_xlsx$|_xml$/, "");
+  const { error } = await supabase
+    .from("clean_reservations")
+    .delete()
+    .eq("property_code", propertyCode)
+    .eq("source_system", sourceSystem)
+    .neq("source_snapshot_id", snapshotId);
+
+  if (error) throw error;
+}
+
+async function removeLegacyCleanRows(propertyCode) {
+  const { error } = await supabase
+    .from("clean_reservations")
+    .delete()
+    .eq("property_code", propertyCode)
+    .eq("source_system", "legacy_excel");
+
+  if (error) throw error;
 }
 
 async function upsertBudgets(budgetRows) {

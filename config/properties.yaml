@@ -66,22 +66,82 @@ _all_bookings_template: &all_bookings_template
   pickup_date_column: "Date of Reservation"
 
 properties:
-  CRS: *all_bookings_template  # Crystal Sands — Excel Date Selector uses Date of Reservation
-  ASM: *all_bookings_template  # Asaya Sands — Excel Date Selector uses Date of Reservation
+  CRS:
+    <<: *all_bookings_template
+    # Leave disabled until the XML snapshot is in SharePoint, the PMS upgrade
+    # SQL has run, and the dry-run reconciliation has been approved.
+    pms:
+      enabled: false
+      replace_legacy_clean_rows: false
+      adapter: "opera_xml"
+      folders: ["PMS Exports/OPERA"]
+      filename_match: "Crystal Sands Reservation Detail"
+      extensions: [".xml"]
+      revenue_mode: "rate_only"
+      require_total_revenue: false
+  ASM:
+    <<: *all_bookings_template
+    pms:
+      enabled: false
+      replace_legacy_clean_rows: false
+      adapter: "opera_xml"
+      folders: ["PMS Exports/OPERA"]
+      filename_match: "Asaya Sands Reservation Detail"
+      extensions: [".xml"]
+      revenue_mode: "rate_only"
+      require_total_revenue: false
 
   SIX:
     <<: *all_bookings_template
     pickup_date_column: "Confirmation Date" # Excel Date Selector uses Confirmation Date
+    pms:
+      enabled: false
+      replace_legacy_clean_rows: false
+      adapter: "hoteltime_xlsx"
+      folders: ["PMS Exports/HotelTime"]
+      filename_match: "The Six Reservation Report"
+      extensions: [".xlsx"]
+      sheet_name: "export"
   SOL:
     <<: *all_bookings_template
     pickup_date_column: "Confirmation Date" # Excel pickup slicer uses Confirmation Date; an Arrival slicer also exists
+    pms:
+      enabled: false
+      replace_legacy_clean_rows: false
+      adapter: "exely_xlsx"
+      folders: ["PMS Exports/Exely"]
+      filename_match: "Sol House Reservation Report"
+      extensions: [".xlsx"]
   KIR:
     <<: *all_bookings_template
     pickup_date_column: "Confirmation Date" # Excel Date Selector uses Confirmation Date
+    pms:
+      enabled: false
+      replace_legacy_clean_rows: false
+      adapter: "exely_xlsx"
+      folders: ["PMS Exports/Exely"]
+      filename_match: "Kirana Reservation Report"
+      extensions: [".xlsx"]
   LYN:
     <<: *all_bookings_template
     pickup_date_column: "Confirmation Date" # Excel Date Selector uses Confirmation Date
+    pms:
+      enabled: false
+      replace_legacy_clean_rows: false
+      adapter: "exely_xlsx"
+      folders: ["PMS Exports/Exely"]
+      filename_match: "Leyn Baan Reservation Report"
+      extensions: [".xlsx"]
 
-  # SRN (Serenity Villa) intentionally omitted — no live file yet.
-  # When it launches, give it the shared template directly:
-  #   SRN: *all_bookings_template
+  SRN:
+    <<: *all_bookings_template
+    pms:
+      enabled: false
+      replace_legacy_clean_rows: false
+      adapter: "exely_xlsx"
+      folders: ["PMS Exports/Exely"]
+      filename_match: "Serenity Reservation Report"
+      extensions: [".xlsx"]
+
+  # Rekawa Reach needs a property_master row before it can be enabled. Its
+  # HotelTime adapter uses the same hoteltime_xlsx configuration as SIX.

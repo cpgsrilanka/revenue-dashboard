@@ -5,7 +5,13 @@ on:
     # 21:30 UTC = 03:00 Sri Lanka time (UTC+5:30) — runs after properties'
     # daily exports are expected to be updated.
     - cron: "30 21 * * *"
-  workflow_dispatch: {} # allows manually triggering a run from the Actions tab
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate files without writing to Supabase"
+        required: true
+        default: true
+        type: boolean
 
 jobs:
   ingest:
@@ -24,7 +30,13 @@ jobs:
 
       - run: npm install
 
-      - run: npm run ingest
+      - name: Run ingestion
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            npm run ingest:dry-run
+          else
+            npm run ingest
+          fi
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}

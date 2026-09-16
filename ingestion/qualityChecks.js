@@ -5,7 +5,13 @@ import dayjs from "dayjs";
  * architecture plan (Section 5). Returns an array of data_quality_log
  * entries ready to insert, and mutates rows in place to mark quarantine.
  */
-export function runQualityChecks({ propertyCode, cleanRows, parseErrors, previousFileRowCount }) {
+export function runQualityChecks({
+  propertyCode,
+  cleanRows,
+  parseErrors,
+  previousFileRowCount,
+  requireTotalRevenue = true,
+}) {
   const findings = [];
 
   // --- Schema drift: if parseErrors is a large fraction of the file, the
@@ -56,12 +62,15 @@ export function runQualityChecks({ propertyCode, cleanRows, parseErrors, previou
   // tested for here, not the ID by itself.
   const seen = new Map();
   for (const { data } of cleanRows) {
-    const key = [
-      data.reservation_id,
-      data.guest_arrival_date,
-      data.guest_departure_date,
-      data.total_revenue,
-    ].join("||");
+    const key = data.source_system && data.source_record_id
+      ? ["pms", data.source_system, data.source_record_id].join("||")
+      : [
+          "legacy",
+          data.reservation_id,
+          data.guest_arrival_date,
+          data.guest_departure_date,
+          data.total_revenue,
+        ].join("||");
     if (seen.has(key)) {
       data.is_quarantined = true;
       data.quarantine_reason = "duplicate_row_in_file";
@@ -104,7 +113,7 @@ export function runQualityChecks({ propertyCode, cleanRows, parseErrors, previou
       continue;
     }
 
-    if (data.status === "confirmed" || data.status === "checked_out") {
+    if (requireTotalRevenue && (data.status === "confirmed" || data.status === "checked_out")) {
       if (data.total_revenue === null) {
         data.is_quarantined = true;
         data.quarantine_reason = "missing_total_revenue";

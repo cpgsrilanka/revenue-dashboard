@@ -83,6 +83,13 @@ create table clean_reservations (
   total_revenue           numeric(14,2),
   currency                text,
   revenue_base_currency   numeric(14,2),          -- converted to group reporting currency, if applicable
+  source_system           text,                    -- legacy_excel / opera / exely / hoteltime
+  source_record_id        text,                    -- stable source booking-line key
+  source_updated_at       date,
+  source_snapshot_id      text,
+  source_rate_amount      numeric(14,2),
+  source_deposit_paid     numeric(14,2),
+  source_outstanding_balance numeric(14,2),
   status                  text check (status in ('confirmed', 'pending', 'cancelled', 'no_show', 'checked_out', 'unknown')),
   channel                 text,                    -- OTA / direct / walk-in, if available
   segment                 text,                    -- DMC / FIT - Local / OTA / Owner, if available
@@ -93,7 +100,8 @@ create table clean_reservations (
   -- Reservation numbers are not unique per property: multi-room bookings and
   -- rebookings can legitimately repeat the same ID. This matches the duplicate
   -- detector's structural key while still making repeat ingestion idempotent.
-  unique nulls not distinct (property_code, reservation_id, guest_arrival_date, guest_departure_date, total_revenue)
+  unique nulls not distinct (property_code, reservation_id, guest_arrival_date, guest_departure_date, total_revenue),
+  unique (property_code, source_system, source_record_id)
 );
 
 create index idx_clean_reservations_property_dates on clean_reservations(property_code, guest_arrival_date);
@@ -386,9 +394,9 @@ create policy "authenticated can read revenue snapshots"
 -- ----------------------------------------------------------------------------
 insert into property_master (property_code, name, entity, sharepoint_filename_match, pms_type, active) values
   ('CRS', 'Crystal Sands',  'CPG', 'Crystal Sands Database', 'Opera Cloud', true),
-  ('SIX', 'The Six',        'CPG', 'The Six Database',       'Opera Cloud', true),
+  ('SIX', 'The Six',        'CPG', 'The Six Database',       'HotelTime', true),
   ('ASM', 'Asaya Sands',    'OGH', 'Asaya Sands Database',   'Opera Cloud', true),
-  ('LYN', '77 Leyn Baan',   'OGH', 'Leyn Baan Database',     null,          true),
-  ('KIR', 'Kirana Villa',   'OGH', 'Kirana Database',        null,          true),
-  ('SOL', 'Sol House',      'OGH', 'Sol House Database',     null,          true),
-  ('SRN', 'Serenity Villa', 'OGH', 'Serenity Villa Database', null,        false);
+  ('LYN', '77 Leyn Baan',   'OGH', 'Leyn Baan Database',     'Exely',       true),
+  ('KIR', 'Kirana Villa',   'OGH', 'Kirana Database',        'Exely',       true),
+  ('SOL', 'Sol House',      'OGH', 'Sol House Database',     'Exely',       true),
+  ('SRN', 'Serenity Villa', 'OGH', 'Serenity Villa Database', 'Exely',     false);

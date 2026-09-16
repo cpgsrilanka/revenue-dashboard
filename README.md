@@ -6,6 +6,16 @@ Current status: the SharePoint and Supabase connections are working, the six act
 
 See `DASHBOARD_ROADMAP.md` for the detailed feature plan.
 
+## PMS export adapters
+
+The legacy property workbooks remain the live source until a property is deliberately cut over. The ingestion service now also has adapters for scheduled PMS exports:
+
+- **OPERA Cloud** (`.xml`) for Crystal Sands and Asaya Sands. The supplied reservation-detail report gives status and room nights reliably, but its rate field is not yet a validated total-stay revenue amount. OPERA rows therefore start in `rate_only` mode and do not publish revenue totals.
+- **Exely** (`.xlsx`) for Leyn Baan, Sol House, Kirana, and Serenity Villa. The adapter maps a daily full booking snapshot, including booking status, room nights, total amount, and prepaid amount.
+- **HotelTime** (`.xlsx`) for The Six and, once it is registered in `property_master`, Rekawa Reach. The adapter preserves its one-line-per-room reporting model and maps accommodation and total-with-VAT separately.
+
+All adapters are **disabled by default** in `config/properties.yaml`. They use a stable PMS record key so amended or cancelled bookings update correctly instead of becoming duplicates. Before enabling any property, follow the reversible cutover guide in `PMS_INGESTION_CUTOVER.md` and run `db/pms-source-adapters-upgrade.sql` in Supabase.
+
 ## What's here
 
 ```
@@ -21,6 +31,7 @@ ingestion/
   parseExcel.js              Excel → unified schema mapping
   parseBudget.js             Revenue pickup report → monthly budget rows
   parseReportMatrix.js        Revenue pickup report → segment matrix rows
+  parsePmsExport.js           OPERA, Exely, and HotelTime export adapters
   qualityChecks.js           Data quality check suite
   workbookGovernance.js       Workbook cleanup / validation / protection dry run
   standardizeWorkbook.py      Excel workbook standardization helper
@@ -83,7 +94,7 @@ The real SharePoint layout has been confirmed: **all properties' files sit in on
 ### 3. Review blank reservation numbers
 The remaining data-rule gap is no longer Asaya's template shape. Asaya's current-year workbook is confirmed and parses, but it has a small number of real-looking booking rows with blank `Reservation No.` values. Decide whether those should be corrected in the source workbook or ingested with a synthetic reservation ID before trusting production totals.
 
-Run `npm test` in `ingestion/` after any change — four test suites cover the shared template, the (now unused, but still protected) legacy per-month/suffix-status pattern, the duplicate-detection fix, and budget parsing.
+Run `npm test` in `ingestion/` after any change. The tests cover the shared template, the legacy per-month/suffix-status pattern, the duplicate-detection fix, budget parsing, report-matrix parsing, and all three PMS adapters.
 
 **A mapping mistake already happened twice here, worth knowing about:** the first version of Crystal Sands' config filtered footer rows by matching cell text like `"FIT - Local"` — which also happens to be a legitimate segment value on real reservation rows, so it silently dropped a real booking. Fixed by filtering on blank `reservation_id` instead. Separately, the first duplicate-detection check flagged any repeated reservation number as an error — but The Six and Sol House showed that a single reservation can legitimately span multiple rows (multi-room bookings) or get rebooked to new dates under the same number. Fixed by keying duplicate detection on `(reservation_id, arrival, departure, total_revenue)` together. Both lessons point the same direction: prefer structural signals (a blank field, an exact match across several columns) over content signals (a specific phrase, an ID alone) — real spreadsheets collide with content-based heuristics eventually.
 

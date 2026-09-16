@@ -29,16 +29,22 @@ export function buildGraphClient() {
 const DATABASE_FOLDERS = ["FY 26-27", "FY 25-26"];
 
 /**
- * Lists every .xlsx file across the known Databases/FY-year folders whose
- * filename contains the property's configured match string (from
- * property_master.sharepoint_filename_match), most-recently-modified first.
+ * Lists source files across the configured folders whose filename contains the
+ * requested match string. Legacy workbook ingestion defaults to the known FY
+ * folders and .xlsx files; PMS adapters supply their own folders/extensions.
  *
  * Returns [{ id, name, lastModifiedDateTime, size, downloadUrl }]
  */
-export async function listPropertyFiles(graphClient, driveId, filenameMatch) {
+export async function listPropertyFiles(
+  graphClient,
+  driveId,
+  filenameMatch,
+  { folders = DATABASE_FOLDERS, extensions = [".xlsx"] } = {}
+) {
   const allMatches = [];
+  const normalizedExtensions = extensions.map((extension) => extension.toLowerCase());
 
-  for (const folder of DATABASE_FOLDERS) {
+  for (const folder of folders) {
     let items;
     try {
       const path = `/drives/${driveId}/root:/${folder}:/children`;
@@ -55,7 +61,7 @@ export async function listPropertyFiles(graphClient, driveId, filenameMatch) {
       .filter(
         (item) =>
           item.file &&
-          item.name.toLowerCase().endsWith(".xlsx") &&
+          normalizedExtensions.some((extension) => item.name.toLowerCase().endsWith(extension)) &&
           item.name.toLowerCase().includes(filenameMatch.toLowerCase())
       )
       .map((item) => ({
