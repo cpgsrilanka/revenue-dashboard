@@ -106,8 +106,8 @@ properties:
     <<: *all_bookings_template
     pickup_date_column: "Confirmation Date" # Excel pickup slicer uses Confirmation Date; an Arrival slicer also exists
     pms:
-      enabled: false
-      replace_legacy_clean_rows: false
+      enabled: true
+      replace_legacy_clean_rows: true
       adapter: "exely_xlsx"
       folders: ["PMS Exports/Exely"]
       filename_match: "Sol House Reservation Report"
