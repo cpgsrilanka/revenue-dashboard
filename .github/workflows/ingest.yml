@@ -33,10 +33,23 @@ jobs:
       - name: Run ingestion
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            npm run ingest:dry-run
+            command=(npm run ingest:dry-run)
           else
-            npm run ingest
+            command=(npm run ingest)
           fi
+
+          for attempt in 1 2 3; do
+            if "${command[@]}"; then
+              exit 0
+            fi
+
+            if [ "$attempt" -lt 3 ]; then
+              echo "Ingestion attempt $attempt failed. Retrying in $((attempt * 30)) seconds..."
+              sleep $((attempt * 30))
+            fi
+          done
+
+          exit 1
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
