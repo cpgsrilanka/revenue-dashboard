@@ -120,6 +120,14 @@ db/revenue-snapshots.sql
 
 Then run ingestion again. The first snapshot creates the baseline; daily pickup becomes meaningful after the next dated snapshot.
 
+If a property reports in more than one currency, also run this once before the next ingestion:
+
+```text
+db/revenue-snapshot-currency-upgrade.sql
+```
+
+This stores pickup snapshots separately by currency rather than combining or discarding them.
+
 ### 4b. Enable clean operational-truth views
 For the existing Supabase project, run this once in the Supabase SQL Editor:
 

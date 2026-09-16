@@ -124,7 +124,7 @@ grant select on clean_reservations, monthly_segment_report, budget to authentica
 
 create or replace view v_daily_pickup as
 with latest as (
-  select distinct on (property_code, period_month)
+  select distinct on (property_code, period_month, currency)
     property_code,
     snapshot_date,
     period_month,
@@ -132,7 +132,7 @@ with latest as (
     reservation_count,
     currency
   from revenue_snapshot
-  order by property_code, period_month, snapshot_date desc, updated_at desc
+  order by property_code, period_month, currency, snapshot_date desc, updated_at desc
 )
 select
   latest.property_code,
@@ -160,6 +160,7 @@ left join lateral (
   from revenue_snapshot prior
   where prior.property_code = latest.property_code
     and prior.period_month = latest.period_month
+    and prior.currency = latest.currency
     and prior.snapshot_date < latest.snapshot_date
   order by prior.snapshot_date desc, prior.updated_at desc
   limit 1

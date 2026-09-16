@@ -145,7 +145,7 @@ export async function getDailyPickupForRange(periodStart, periodEnd = periodStar
   const rowsByPeriod = new Map();
 
   for (const row of data || []) {
-    const key = `${row.property_code}||${row.period_month}`;
+    const key = `${row.property_code}||${row.period_month}||${row.currency}`;
     const rows = rowsByPeriod.get(key) || [];
     rows.push(row);
     rowsByPeriod.set(key, rows);

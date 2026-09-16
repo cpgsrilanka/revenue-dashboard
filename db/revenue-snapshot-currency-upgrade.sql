@@ -1,18 +1,5 @@
--- Daily pickup foundation.
--- Run this in Supabase SQL Editor after db/schema.sql for existing projects.
-
-create table if not exists revenue_snapshot (
-  id bigserial primary key,
-  property_code text not null references property_master(property_code),
-  snapshot_date date not null default current_date,
-  period_month date not null,
-  actual_revenue numeric(14,2) not null default 0,
-  reservation_count integer not null default 0,
-  currency text not null default 'LKR',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (property_code, snapshot_date, period_month, currency)
-);
+-- Currency-safe daily pickup snapshots.
+-- Run once in the existing Supabase project before the next ingestion run.
 
 alter table revenue_snapshot
   drop constraint if exists revenue_snapshot_property_code_snapshot_date_period_month_key;
@@ -24,10 +11,9 @@ alter table revenue_snapshot
   add constraint revenue_snapshot_property_currency_snapshot_key
   unique (property_code, snapshot_date, period_month, currency);
 
-create index if not exists idx_revenue_snapshot_lookup
-  on revenue_snapshot(property_code, period_month, snapshot_date desc);
+drop view if exists v_daily_pickup;
 
-create or replace view v_daily_pickup as
+create view v_daily_pickup as
 with latest as (
   select distinct on (property_code, period_month, currency)
     property_code,
@@ -72,14 +58,4 @@ left join lateral (
 ) previous on true;
 
 alter view v_daily_pickup set (security_invoker = true);
-
-alter table revenue_snapshot enable row level security;
-
-grant select on revenue_snapshot to authenticated;
 grant select on v_daily_pickup to authenticated;
-
-drop policy if exists "authenticated can read revenue snapshots" on revenue_snapshot;
-create policy "authenticated can read revenue snapshots"
-  on revenue_snapshot for select
-  to authenticated
-  using (true);

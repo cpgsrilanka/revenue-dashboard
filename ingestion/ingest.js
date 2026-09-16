@@ -273,7 +273,7 @@ async function ingestProperty(graphClient, driveId, property) {
     totalMatrixRows += matrixRows.length;
   }
 
-  return {
+  const result = {
     propertyCode,
     status: "ok",
     filesProcessed,
@@ -283,6 +283,11 @@ async function ingestProperty(graphClient, driveId, property) {
     findingsCount: totalFindings,
     hasCriticalFindings: hasCritical,
   };
+  console.log(
+    `${propertyCode}: completed ${filesProcessed} file(s), ${totalRows} row(s), ` +
+      `${totalBudgetMonths} budget month(s), ${totalMatrixRows} matrix row(s).`
+  );
+  return result;
 }
 
 async function upsertCleanRows(rows) {
@@ -437,12 +442,12 @@ async function refreshRevenueSnapshots() {
   }));
 
   const { error: snapshotError } = await supabase.from("revenue_snapshot").upsert(rows, {
-    onConflict: "property_code,snapshot_date,period_month",
+    onConflict: "property_code,snapshot_date,period_month,currency",
   });
 
   if (snapshotError) {
     console.warn(
-      `Daily pickup snapshots are not active yet. Run db/revenue-snapshots.sql in Supabase, then run ingestion again. (${snapshotError.message})`
+      `Daily pickup snapshots were skipped. Run db/revenue-snapshot-currency-upgrade.sql in Supabase, then run ingestion again. (${snapshotError.message})`
     );
     return 0;
   }
