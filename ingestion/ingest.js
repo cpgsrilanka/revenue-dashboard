@@ -185,7 +185,11 @@ async function ingestProperty(graphClient, driveId, property) {
     if (existing) {
       if (!DRY_RUN) {
         if (cleanRowsToStore.length > 0) {
-          await upsertCleanRows(cleanRowsToStore.map((r) => ({ ...r.data })));
+          const rowsToStore = cleanRowsToStore.map((r) => ({ ...r.data }));
+          if (pms && !hasCritical) {
+            await removeMatchingLegacyCleanRows(rowsToStore);
+          }
+          await upsertCleanRows(rowsToStore);
         }
         if (pms && !hasCritical) {
           await removeStalePmsRows(propertyCode, pms.adapter, fileHash);
@@ -249,7 +253,11 @@ async function ingestProperty(graphClient, driveId, property) {
 
     // 3. Upsert clean rows (unified schema)
     if (cleanRowsToStore.length > 0) {
-      await upsertCleanRows(cleanRowsToStore.map((r) => ({ ...r.data })));
+      const rowsToStore = cleanRowsToStore.map((r) => ({ ...r.data }));
+      if (pms && !hasCritical) {
+        await removeMatchingLegacyCleanRows(rowsToStore);
+      }
+      await upsertCleanRows(rowsToStore);
     }
 
     if (pms && !hasCritical) {
@@ -363,6 +371,62 @@ async function removeLegacyCleanRows(propertyCode) {
     .eq("source_system", "legacy_excel");
 
   if (error) throw error;
+}
+
+async function removeMatchingLegacyCleanRows(incomingRows) {
+  if (!incomingRows.length) return;
+
+  const propertyCode = incomingRows[0].property_code;
+  const incomingKeys = new Set(incomingRows.map(cleanReservationNaturalKey));
+  const legacyRows = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("clean_reservations")
+      .select("id,reservation_id,property_code,guest_arrival_date,guest_departure_date,total_revenue")
+      .eq("property_code", propertyCode)
+      .eq("source_system", "legacy_excel")
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+    legacyRows.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+  }
+
+  const matchingIds = legacyRows
+    .filter((row) => incomingKeys.has(cleanReservationNaturalKey(row)))
+    .map((row) => row.id);
+
+  for (let start = 0; start < matchingIds.length; start += pageSize) {
+    const { error } = await supabase
+      .from("clean_reservations")
+      .delete()
+      .in("id", matchingIds.slice(start, start + pageSize));
+    if (error) throw error;
+  }
+
+  if (matchingIds.length > 0) {
+    console.log(
+      `${propertyCode}: replaced ${matchingIds.length} legacy booking row(s) that match the incoming PMS snapshot.`
+    );
+  }
+}
+
+function cleanReservationNaturalKey(row) {
+  return JSON.stringify([
+    row.property_code ?? null,
+    row.reservation_id ?? null,
+    row.guest_arrival_date ?? null,
+    row.guest_departure_date ?? null,
+    normaliseRevenueKey(row.total_revenue),
+  ]);
+}
+
+function normaliseRevenueKey(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : String(value);
 }
 
 async function upsertBudgets(budgetRows) {
